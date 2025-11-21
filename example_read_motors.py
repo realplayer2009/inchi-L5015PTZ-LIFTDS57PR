@@ -14,7 +14,7 @@ def main():
     parser.add_argument('--baud', type=int, default=115200, help='波特率')
     parser.add_argument('--yaw-id', type=int, default=1, help='Yaw电机ID')
     parser.add_argument('--pitch-id', type=int, default=2, help='Pitch电机ID')
-    parser.add_argument('--loop', action='store_true', help='循环读取')
+    parser.add_argument('--loop', action='store_true', help='循环读取（持续读取电机参数）')
     parser.add_argument('--interval', type=float, default=0.5, help='循环间隔(秒)')
     args = parser.parse_args()
 

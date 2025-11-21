@@ -21,13 +21,13 @@ class MotorMonitorApp:
         self.baudrate = baudrate
         self.comm: Optional[RS485Comm] = None
         self.monitoring = False
+        self.port_opened = False
         
         self.root.title('双轴电机监控')
         self.root.geometry('550x450')
         self.root.resizable(False, False)
         
         self.init_ui()
-        self.connect_motor()
         
     def init_ui(self):
         """初始化UI"""
@@ -51,18 +51,31 @@ class MotorMonitorApp:
             status_frame,
             text='●',
             font=('Arial', 20),
-            fg='red',
+            fg='gray',
             bg='#f5f5f5'
         )
         self.conn_indicator.pack(side=tk.LEFT, padx=10)
         
         self.status_label = tk.Label(
             status_frame,
-            text=f'串口: {self.port}',
+            text=f'串口: {self.port} (未连接)',
             font=('Arial', 10),
             bg='#f5f5f5'
         )
         self.status_label.pack(side=tk.LEFT, padx=5)
+        
+        # 右上角打开串口按钮
+        self.open_port_btn = tk.Button(
+            status_frame,
+            text='打开串口并读取',
+            command=self.open_port_and_read,
+            font=('Arial', 10, 'bold'),
+            bg='#4CAF50',
+            fg='white',
+            width=15,
+            height=1
+        )
+        self.open_port_btn.pack(side=tk.RIGHT, padx=10)
         
         # 主内容区
         content_frame = tk.Frame(self.root)
@@ -78,9 +91,22 @@ class MotorMonitorApp:
         pitch_frame.pack(fill=tk.X, pady=5)
         self.pitch_widgets = self.create_motor_display(pitch_frame)
         
-        # 控制按钮
+        # 控制按钮（初始禁用）
         button_frame = tk.Frame(self.root)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        self.auto_read_btn = tk.Button(
+            button_frame,
+            text='自动读取角度',
+            command=self.toggle_auto_read,
+            font=('Arial', 11, 'bold'),
+            bg='#FF9800',
+            fg='white',
+            width=15,
+            height=2,
+            state=tk.DISABLED
+        )
+        self.auto_read_btn.pack(side=tk.LEFT, padx=5)
         
         self.start_btn = tk.Button(
             button_frame,
@@ -90,7 +116,8 @@ class MotorMonitorApp:
             bg='#4CAF50',
             fg='white',
             width=12,
-            height=2
+            height=2,
+            state=tk.DISABLED
         )
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
@@ -155,19 +182,52 @@ class MotorMonitorApp:
             'status': status_value
         }
     
-    def connect_motor(self):
-        """连接电机"""
-        try:
-            self.comm = RS485Comm(port=self.port, baudrate=self.baudrate)
-            if self.comm.available:
-                self.conn_indicator.config(fg='green')
-                self.status_label.config(text=f'串口: {self.port} (已连接)')
-            else:
+    def open_port_and_read(self):
+        """打开串口并开始连续读取"""
+        if self.port_opened:
+            # 已打开，则关闭
+            self.close_port()
+        else:
+            # 未打开，则打开并自动开始读取
+            try:
+                self.comm = RS485Comm(port=self.port, baudrate=self.baudrate)
+                if self.comm.available:
+                    self.port_opened = True
+                    self.conn_indicator.config(fg='green')
+                    self.status_label.config(text=f'串口: {self.port} (已连接)')
+                    self.open_port_btn.config(text='关闭串口', bg='#f44336')
+                    
+                    # 启用控制按钮
+                    self.auto_read_btn.config(state=tk.NORMAL)
+                    self.start_btn.config(state=tk.NORMAL)
+                    
+                    # 自动开始读取
+                    self.start_monitoring()
+                else:
+                    self.conn_indicator.config(fg='red')
+                    self.status_label.config(text=f'串口: {self.port} (连接失败)')
+            except Exception as e:
                 self.conn_indicator.config(fg='red')
-                self.status_label.config(text=f'串口: {self.port} (连接失败)')
-        except Exception as e:
-            self.conn_indicator.config(fg='red')
-            self.status_label.config(text=f'错误: {str(e)}')
+                self.status_label.config(text=f'错误: {str(e)}')
+    
+    def close_port(self):
+        """关闭串口"""
+        if self.monitoring:
+            self.stop_monitoring()
+        
+        if self.comm:
+            self.comm.close()
+            self.comm = None
+        
+        self.port_opened = False
+        self.conn_indicator.config(fg='gray')
+        self.status_label.config(text=f'串口: {self.port} (未连接)')
+        self.open_port_btn.config(text='打开串口并读取', bg='#4CAF50')
+        
+        # 禁用控制按钮
+        self.auto_read_btn.config(state=tk.DISABLED)
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.DISABLED)
     
     def start_monitoring(self):
         """开始监控"""
@@ -175,6 +235,7 @@ class MotorMonitorApp:
             self.monitoring = True
             self.start_btn.config(state=tk.DISABLED)
             self.stop_btn.config(state=tk.NORMAL)
+            self.auto_read_btn.config(text='停止自动读取', bg='#FF5722')
             self.yaw_widgets['status'].config(text='正在读取...', fg='orange')
             self.pitch_widgets['status'].config(text='正在读取...', fg='orange')
             self.update_data()
@@ -184,6 +245,7 @@ class MotorMonitorApp:
         self.monitoring = False
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
+        self.auto_read_btn.config(text='自动读取角度', bg='#FF9800')
         self.yaw_widgets['status'].config(text='已停止', fg='gray')
         self.pitch_widgets['status'].config(text='已停止', fg='gray')
     
@@ -218,11 +280,21 @@ class MotorMonitorApp:
         if self.monitoring:
             self.root.after(500, self.update_data)
     
+    def toggle_auto_read(self):
+        """切换自动读取状态"""
+        if self.monitoring:
+            # 当前正在监控，则停止
+            self.stop_monitoring()
+            self.auto_read_btn.config(text='自动读取角度', bg='#FF9800')
+        else:
+            # 当前未监控，则开始
+            self.start_monitoring()
+            self.auto_read_btn.config(text='停止自动读取', bg='#FF5722')
+    
     def on_close(self):
         """关闭窗口"""
-        self.monitoring = False
-        if self.comm:
-            self.comm.close()
+        if self.port_opened:
+            self.close_port()
         self.root.destroy()
 
 
@@ -230,11 +302,17 @@ def main():
     parser = argparse.ArgumentParser(description='电机监控GUI (Tkinter)')
     parser.add_argument('--port', default='COM6', help='串口号')
     parser.add_argument('--baud', type=int, default=115200, help='波特率')
+    parser.add_argument('--autostart', action='store_true', help='启动后自动开始监控')
     args = parser.parse_args()
     
     root = tk.Tk()
     app = MotorMonitorApp(root, port=args.port, baudrate=args.baud)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
+    
+    # 自动启动监控
+    if args.autostart:
+        root.after(100, app.start_monitoring)
+    
     root.mainloop()
 
 
