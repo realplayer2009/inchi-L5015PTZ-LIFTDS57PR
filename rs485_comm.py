@@ -145,7 +145,7 @@ class RS485Comm:
         
         响应数据格式:
           Byte0: 0x94 (命令回显)
-          Byte1: 电机温度 int8_t (1℃/LSB)
+          Byte1: 保留数据 (reserved; verify protocol for meaning)
           Byte2-5: 保留数据
           Byte6-7: 角度 uint16 (0.01°/LSB, 范围0-35999)
         
@@ -232,6 +232,9 @@ class RS485Comm:
         
         # 转换为 0.01°/LSB 的 int32
         angle_control = int(target_deg * 100)
+        # 检查是否在 int32_t 范围内
+        if not (-2147483648 <= angle_control <= 2147483647):
+            raise ValueError(f"angle_control {angle_control} out of int32_t range")
         
         # 构建payload (注意: Byte1=0x00保留字节)
         speed_low = speed_rpm & 0xFF
