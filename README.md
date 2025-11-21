@@ -13,12 +13,34 @@ Byte3-10 : 数据区 (8字节)
 Byte11-12: CRC16 (Modbus RTU, 低字节在前)
 ```
 
-**数据区字段** (命令0x94响应):
+**支持命令**:
+
+### 0x94 - 读取单圈角度
+**命令数据区**:
+- `Byte0`: 0x94 (命令码)
+- `Byte1-7`: 0x00 (填充字节)
+
+**响应数据区**:
 - `Byte0`: 0x94 (命令回显)
 - `Byte1-5`: 保留字节 (当前为0x00)
 - `Byte6-7`: 单圈角度 uint16 (0.01°/LSB, 范围0-35999 → 0.00-359.99°)
 
-**读取角度命令**: `0x94`
+### 0xA4 - 设置目标角度 (位置控制)
+**命令数据区**:
+- `Byte0`: 0xA4 (命令码)
+- `Byte1`: 0x00 (保留)
+- `Byte2`: 速度限制低字节 (RPM)
+- `Byte3`: 速度限制高字节 (RPM)
+- `Byte4`: 位置控制低字节 (int16, 0.01°/LSB)
+- `Byte5`: 位置控制高字节 (int16, 0.01°/LSB)
+- `Byte6`: 多圈位置低字节 (固定0x00)
+- `Byte7`: 多圈位置高字节 (固定0x00)
+
+**响应数据区**:
+- `Byte0`: 0xA4 (命令回显)
+- `Byte1-7`: 响应数据 (具体含义待确认)
+
+**说明**: 位置控制值为 int16 类型,角度范围 -180° ~ +180°,转换为 0.01°/LSB 单位 (-18000 ~ +18000)。速度限制单位为RPM,默认100。
 
 **角度归一化**: 程序自动将超过180°的角度转换为负值表示 (-180° ~ +180°)
 
@@ -54,7 +76,19 @@ python read_continuous.py --port COM6 --interval 0.5
 # 13:28:49     |   +0.18°     |  -53.20°     | OK
 ```
 
-### 3. 单次读取示例
+### 3. 角度控制测试 (0xA4命令)
+```powershell
+# 设置YAW电机到45°, 速度100RPM
+python test_angle_control.py --port COM6 --motor 1 --angle 45.0 --speed 100
+
+# 运行角度序列测试 (0° → 45° → 90° → -45° → -90° → 0°)
+python test_angle_control.py --port COM6 --motor 1 --test-sequence --delay 3.0
+
+# 测试PITCH电机
+python test_angle_control.py --port COM6 --motor 2 --angle -30.0
+```
+
+### 4. 单次读取示例
 ```powershell
 # 单次读取
 python example_read_motors.py --port COM6
@@ -86,8 +120,9 @@ angle = comm.read_angle(motor_id=1)  # 返回 -180.00 ~ +180.00
 
 ### 核心模块
 - **`rs485_comm.py`**: RS485通信类（协议V4.3）
-  - `read_angle(motor_id)`: 读取归一化角度
+  - `read_angle(motor_id)`: 读取归一化角度 (0x94命令)
   - `read_status(motor_id)`: 读取完整状态
+  - `set_target_angle(motor_id, target_deg, speed_rpm)`: 设置目标角度 (0xA4命令)
   - 自动重试、超时处理、CRC校验
 
 - **`proto_v43.py`**: 协议解析工具
@@ -107,6 +142,11 @@ angle = comm.read_angle(motor_id=1)  # 返回 -180.00 ~ +180.00
 - **`example_read_motors.py`**: 详细信息读取示例
   - 显示所有字段
   - 支持循环模式
+
+- **`test_angle_control.py`**: 角度控制测试工具 (0xA4命令)
+  - 单角度测试: `--angle 45.0`
+  - 序列测试: `--test-sequence`
+  - 实时反馈控制效果
 
 - **`angle_read_v43.py`**: 单独角度读取工具
 - **`read_motor_status_v43.py`**: 被动监听串口帧流
@@ -133,6 +173,15 @@ status = comm.read_status(motor_id=1)
 print(f"原始角度: {status['angle_0_360']:.2f}°")
 print(f"归一化角度: {status['angle_deg']:.2f}°")
 print(f"原始数值: {status['angle_raw']}")
+
+# 设置目标角度 (0xA4命令)
+result = comm.set_target_angle(motor_id=1, target_deg=45.0, speed_rpm=100)
+if result and result['success']:
+    print(f"目标角度设置成功: {result['target_deg']}°")
+    print(f"速度限制: {result['speed_rpm']} RPM")
+    print(f"控制值: {result['angle_control']}")
+else:
+    print("设置失败")
 
 # 关闭串口
 comm.close()
@@ -163,7 +212,10 @@ comm.close()
 1. **串口独占**：同时只能一个程序打开串口
 2. **数据字段**：Byte1-5保留字节当前未使用，未来可能扩展
 3. **角度范围**：单圈角度0-360°，如需多圈需额外处理
-4. **命令扩展**：当前仅实现0x94读取命令，可按需添加控制命令
+4. **命令支持**：
+   - **0x94**: 读取单圈角度 (已实现并测试)
+   - **0xA4**: 设置目标角度 (已实现，待硬件测试)
+5. **角度控制**：`set_target_angle()` 使用速度限制和位置控制模式，角度范围 -180° ~ +180°
 
 ## 常见问题
 
@@ -177,7 +229,10 @@ A: 检查COM端口号是否正确，使用 `Get-WmiObject Win32_PnPEntity` 查�
 A: 单圈角度在0°/360°边界会跳变，归一化后在±180°边界跳变属正常。
 
 **Q: 如何添加新命令？**
-A: 在 `rs485_comm.py` 中添加新命令常量和对应方法，参考 `CMD_READ_ANGLE = 0x94`。
+A: 在 `rs485_comm.py` 中添加新命令常量和对应方法，参考 `CMD_READ_ANGLE = 0x94` 和 `CMD_READ_STATUS_A4 = 0xA4`。
+
+**Q: 0xA4命令的数据格式？**
+A: 当前按通用格式解析，返回7个数据字节。具体字段含义需根据实际协议文档在 `read_status_a4()` 方法中调整解析逻辑。
 
 ## 许可证
 内部项目示例，未附加外部许可证。

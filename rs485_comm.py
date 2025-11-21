@@ -15,6 +15,7 @@ DATA_SIZE = 8
 
 # 命令码
 CMD_READ_ANGLE = 0x94
+CMD_READ_STATUS_A4 = 0xA4
 
 def modbus_crc(data: bytes) -> int:
     """Modbus CRC16 计算"""
@@ -144,7 +145,8 @@ class RS485Comm:
         
         响应数据格式:
           Byte0: 0x94 (命令回显)
-          Byte1-5: 保留数据
+          Byte1: 电机温度 int8_t (1℃/LSB)
+          Byte2-5: 保留数据
           Byte6-7: 角度 uint16 (0.01°/LSB, 范围0-35999)
         
         返回值: -180.00° ~ +180.00° (超过180°转换为负角度)
@@ -161,11 +163,12 @@ class RS485Comm:
         return angle
 
     def read_status(self, motor_id: int) -> Optional[Dict[str, Any]]:
-        """读取电机状态（角度+其他数据），返回字典或None
+        """读取电机状态（角度+温度+其他数据），返回字典或None
         
         响应数据格式 (8字节):
           Byte0: 0x94 (命令回显)
-          Byte1-5: 预留数据区 (具体含义待确认)
+          Byte1: 电机温度 int8_t (1℃/LSB)
+          Byte2-5: 预留数据区
           Byte6-7: 单圈角度 uint16 (0.01°/LSB, 0-35999 => 0-359.99°)
         """
         data = self.transact(motor_id, CMD_READ_ANGLE)
@@ -173,7 +176,8 @@ class RS485Comm:
             return None
         
         cmd_echo = data[0]
-        reserved_1 = data[1]
+        # Byte1: 电机温度 (int8_t, 1℃/LSB)
+        temperature = int.from_bytes([data[1]], 'little', signed=True)
         reserved_2 = data[2]
         reserved_3 = data[3]
         reserved_4 = data[4]
@@ -188,7 +192,79 @@ class RS485Comm:
             'angle_raw': angle_raw,
             'angle_0_360': angle_0_360,
             'angle_deg': angle_deg,
-            'reserved_bytes': [reserved_1, reserved_2, reserved_3, reserved_4, reserved_5],
+            'temperature': temperature,
+            'reserved_bytes': [reserved_2, reserved_3, reserved_4, reserved_5],
+            'raw_hex': data.hex()
+        }
+
+    def set_target_angle(self, motor_id: int, target_deg: float, speed_rpm: int = 100) -> Optional[Dict[str, Any]]:
+        """设置电机目标角度（命令0xA4）
+        
+        参数:
+            motor_id: 电机ID (1=Yaw, 2=Pitch)
+            target_deg: 目标角度(度)，范围 -180° ~ +180° 或 0° ~ 360°
+            speed_rpm: 速度限制(RPM)，默认100
+        
+        命令数据格式 (8字节):
+          Byte0: 0xA4 (命令码)
+          Byte1: 0x00 (保留)
+          Byte2: 速度限制低字节 (RPM)
+          Byte3: 速度限制高字节
+          Byte4: 位置控制字节0 (int32_t低字节, 0.01°/LSB)
+          Byte5: 位置控制字节1
+          Byte6: 位置控制字节2
+          Byte7: 位置控制字节3 (int32_t高字节)
+          
+        示例: 10° = 1000 LSB = 0x000003E8 -> [0xE8, 0x03, 0x00, 0x00]
+        
+        响应数据格式 (8字节):
+          Byte0: 0xA4 (命令回显)
+          Byte1: 电机温度 int8_t (1℃/LSB)
+          Byte2-7: 其他状态数据
+        
+        返回: 响应字典或None
+        """
+        # 归一化角度到 -180 ~ +180
+        if target_deg > 180.0:
+            target_deg -= 360.0
+        elif target_deg < -180.0:
+            target_deg += 360.0
+        
+        # 转换为 0.01°/LSB 的 int32
+        angle_control = int(target_deg * 100)
+        
+        # 构建payload (注意: Byte1=0x00保留字节)
+        speed_low = speed_rpm & 0xFF
+        speed_high = (speed_rpm >> 8) & 0xFF
+        
+        # 位置控制 int32_t (4字节, little-endian)
+        angle_bytes = angle_control.to_bytes(4, byteorder='little', signed=True)
+        
+        payload = bytes([
+            0x00,              # Byte1: 保留字节
+            speed_low,         # Byte2: 速度限制低字节
+            speed_high,        # Byte3: 速度限制高字节
+            angle_bytes[0],    # Byte4: 位置控制字节0 (低字节)
+            angle_bytes[1],    # Byte5: 位置控制字节1
+            angle_bytes[2],    # Byte6: 位置控制字节2
+            angle_bytes[3]     # Byte7: 位置控制字节3 (高字节)
+        ])
+        
+        data = self.transact(motor_id, CMD_READ_STATUS_A4, payload)
+        if data is None or len(data) != DATA_SIZE:
+            return None
+        
+        cmd_echo = data[0]
+        # Byte1: 电机温度 (int8_t, 1℃/LSB)
+        temperature = int.from_bytes([data[1]], 'little', signed=True)
+        
+        return {
+            'cmd_echo': f'0x{cmd_echo:02X}',
+            'success': cmd_echo == CMD_READ_STATUS_A4,
+            'target_deg': target_deg,
+            'speed_rpm': speed_rpm,
+            'angle_control': angle_control,
+            'temperature': temperature,
             'raw_hex': data.hex()
         }
 

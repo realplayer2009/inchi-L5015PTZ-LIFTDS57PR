@@ -23,8 +23,18 @@ class MotorMonitorApp:
         self.monitoring = False
         self.port_opened = False
         
-        self.root.title('双轴电机监控')
-        self.root.geometry('550x450')
+        # 角度控制相关
+        self.yaw_target_var = tk.StringVar()
+        self.pitch_target_var = tk.StringVar()
+        self.yaw_timer = None
+        self.pitch_timer = None
+        
+        # 温度缓存（保持最后一次数据）
+        self.yaw_temperature = None
+        self.pitch_temperature = None
+        
+        self.root.title('云台电机监控')
+        self.root.geometry('550x600')
         self.root.resizable(False, False)
         
         self.init_ui()
@@ -91,6 +101,13 @@ class MotorMonitorApp:
         pitch_frame.pack(fill=tk.X, pady=5)
         self.pitch_widgets = self.create_motor_display(pitch_frame)
         
+        # 绑定角度输入框变化事件
+        self.yaw_widgets['entry'].config(textvariable=self.yaw_target_var)
+        self.yaw_target_var.trace('w', lambda *args: self.on_angle_changed(1, self.yaw_target_var))
+        
+        self.pitch_widgets['entry'].config(textvariable=self.pitch_target_var)
+        self.pitch_target_var.trace('w', lambda *args: self.on_angle_changed(2, self.pitch_target_var))
+        
         # 控制按钮（初始禁用）
         button_frame = tk.Frame(self.root)
         button_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -136,7 +153,7 @@ class MotorMonitorApp:
         
     def create_motor_display(self, parent: tk.Frame) -> dict:
         """创建电机数据显示组件"""
-        # 归一化角度（大字体显示）
+        # 归一化角度（大字体显示）+ 角度输入框
         angle_frame = tk.Frame(parent)
         angle_frame.pack(pady=10)
         
@@ -148,7 +165,18 @@ class MotorMonitorApp:
             fg='#2196F3'
         )
         angle_value.pack(side=tk.LEFT, padx=5)
-        tk.Label(angle_frame, text='°', font=('Arial', 18)).pack(side=tk.LEFT)
+        tk.Label(angle_frame, text='°', font=('Arial', 18)).pack(side=tk.LEFT, padx=5)
+        
+        # 角度控制输入框
+        tk.Label(angle_frame, text='目标角度:', font=('Arial', 10)).pack(side=tk.LEFT, padx=(20, 5))
+        angle_entry = tk.Entry(
+            angle_frame,
+            width=8,
+            font=('Arial', 12),
+            justify='center'
+        )
+        angle_entry.pack(side=tk.LEFT, padx=5)
+        tk.Label(angle_frame, text='°', font=('Arial', 10)).pack(side=tk.LEFT)
         
         # 详细信息
         info_frame = tk.Frame(parent)
@@ -175,11 +203,28 @@ class MotorMonitorApp:
         status_value = tk.Label(status_frame, text='未连接', font=('Arial', 9), fg='gray')
         status_value.pack(side=tk.LEFT)
         
+        # 控制状态
+        control_frame = tk.Frame(info_frame)
+        control_frame.pack(fill=tk.X, pady=2)
+        tk.Label(control_frame, text='控制状态:', font=('Arial', 9), width=12, anchor='w').pack(side=tk.LEFT)
+        control_status = tk.Label(control_frame, text='--', font=('Arial', 9), fg='gray')
+        control_status.pack(side=tk.LEFT)
+        
+        # 电机温度
+        temp_frame = tk.Frame(info_frame)
+        temp_frame.pack(fill=tk.X, pady=2)
+        tk.Label(temp_frame, text='电机温度:', font=('Arial', 9), width=12, anchor='w').pack(side=tk.LEFT)
+        temp_value = tk.Label(temp_frame, text='--', font=('Arial', 9, 'bold'))
+        temp_value.pack(side=tk.LEFT)
+        
         return {
             'angle': angle_value,
             'original': original_value,
             'raw': raw_value,
-            'status': status_value
+            'status': status_value,
+            'entry': angle_entry,
+            'control_status': control_status,
+            'temperature': temp_value
         }
     
     def open_port_and_read(self):
@@ -222,7 +267,7 @@ class MotorMonitorApp:
         self.port_opened = False
         self.conn_indicator.config(fg='gray')
         self.status_label.config(text=f'串口: {self.port} (未连接)')
-        self.open_port_btn.config(text='打开串口并读取', bg='#4CAF50')
+        self.open_port_btn.config(text='打开串口并读取', bg="#4CAF50")
         
         # 禁用控制按钮
         self.auto_read_btn.config(state=tk.DISABLED)
@@ -262,6 +307,11 @@ class MotorMonitorApp:
             self.yaw_widgets['original'].config(text=f"{yaw_status['angle_0_360']:.2f}°")
             self.yaw_widgets['raw'].config(text=f"{yaw_status['angle_raw']}")
             self.yaw_widgets['status'].config(text='正常', fg='green')
+            # 更新温度（保持最后一次数据）
+            if 'temperature' in yaw_status:
+                self.yaw_temperature = yaw_status['temperature']
+            if self.yaw_temperature is not None:
+                self.yaw_widgets['temperature'].config(text=f"{self.yaw_temperature}℃", fg='blue')
         else:
             self.yaw_widgets['status'].config(text='读取失败', fg='red')
         
@@ -273,6 +323,11 @@ class MotorMonitorApp:
             self.pitch_widgets['original'].config(text=f"{pitch_status['angle_0_360']:.2f}°")
             self.pitch_widgets['raw'].config(text=f"{pitch_status['angle_raw']}")
             self.pitch_widgets['status'].config(text='正常', fg='green')
+            # 更新温度（保持最后一次数据）
+            if 'temperature' in pitch_status:
+                self.pitch_temperature = pitch_status['temperature']
+            if self.pitch_temperature is not None:
+                self.pitch_widgets['temperature'].config(text=f"{self.pitch_temperature}℃", fg='blue')
         else:
             self.pitch_widgets['status'].config(text='读取失败', fg='red')
         
@@ -290,6 +345,63 @@ class MotorMonitorApp:
             # 当前未监控，则开始
             self.start_monitoring()
             self.auto_read_btn.config(text='停止自动读取', bg='#FF5722')
+    
+    def on_angle_changed(self, motor_id: int, var: tk.StringVar):
+        """角度输入框变化回调"""
+        # 取消之前的定时器
+        if motor_id == 1 and self.yaw_timer:
+            self.root.after_cancel(self.yaw_timer)
+            self.yaw_timer = None
+        elif motor_id == 2 and self.pitch_timer:
+            self.root.after_cancel(self.pitch_timer)
+            self.pitch_timer = None
+        
+        # 设置1秒后执行
+        timer = self.root.after(1000, lambda: self.send_angle_command(motor_id, var))
+        if motor_id == 1:
+            self.yaw_timer = timer
+        else:
+            self.pitch_timer = timer
+    
+    def send_angle_command(self, motor_id: int, var: tk.StringVar):
+        """发送0xA4角度控制命令"""
+        if not self.comm or not self.comm.available:
+            return
+        
+        # 获取输入的角度值
+        angle_str = var.get().strip()
+        if not angle_str:
+            return
+        
+        try:
+            target_angle = float(angle_str)
+        except ValueError:
+            widget = self.yaw_widgets if motor_id == 1 else self.pitch_widgets
+            widget['control_status'].config(text='输入格式错误', fg='red')
+            return
+        
+        # 发送0xA4命令
+        widget = self.yaw_widgets if motor_id == 1 else self.pitch_widgets
+        widget['control_status'].config(text='发送中...', fg='orange')
+        
+        try:
+            result = self.comm.set_target_angle(motor_id, target_angle, speed_rpm=100)
+            if result and result['success']:
+                widget['control_status'].config(
+                    text=f'✓ 已设置 {target_angle:+.1f}°',
+                    fg='green'
+                )
+                # 更新温度显示（保持最后一次数据）
+                if 'temperature' in result:
+                    if motor_id == 1:
+                        self.yaw_temperature = result['temperature']
+                    else:
+                        self.pitch_temperature = result['temperature']
+                    widget['temperature'].config(text=f"{result['temperature']}℃", fg='blue')
+            else:
+                widget['control_status'].config(text='设置失败', fg='red')
+        except Exception as e:
+            widget['control_status'].config(text=f'错误: {str(e)}', fg='red')
     
     def on_close(self):
         """关闭窗口"""
