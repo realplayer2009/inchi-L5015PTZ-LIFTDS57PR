@@ -11,7 +11,7 @@ from rs485_comm import RS485Comm
 class LiftMotorController:
     """升降电机控制器"""
     
-    def __init__(self, port: str = 'COM6', baudrate: int = 115200, motor_id: int = 3):
+    def __init__(self, port: str = 'COM9', baudrate: int = 115200, motor_id: int = 3):
         """
         初始化升降电机控制器
         
@@ -172,7 +172,7 @@ class LiftMotorController:
 
 
 # 便捷函数：快速创建升降电机控制器
-def create_lift_controller(port: str = 'COM6', baudrate: int = 115200, 
+def create_lift_controller(port: str = 'COM9', baudrate: int = 115200, 
                           motor_id: int = 3) -> LiftMotorController:
     """
     创建升降电机控制器
@@ -190,10 +190,10 @@ def create_lift_controller(port: str = 'COM6', baudrate: int = 115200,
 
 if __name__ == '__main__':
     # 测试代码
-    import argparse
+    import argparsen
     
     parser = argparse.ArgumentParser(description='升降电机控制器测试')
-    parser.add_argument('--port', default='COM6', help='串口号')
+    parser.add_argument('--port', default='COM9', help='串口号')
     parser.add_argument('--baud', type=int, default=115200, help='波特率')
     parser.add_argument('--id', type=int, default=3, help='电机地址')
     args = parser.parse_args()

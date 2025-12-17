@@ -12,7 +12,7 @@ from rs485_comm import RS485Comm
 class PTZController:
     """PTZ云台控制器，管理YAW和PITCH两个电机轴"""
     
-    def __init__(self, port: str = 'COM6', baudrate: int = 115200, 
+    def __init__(self, port: str = 'COM9', baudrate: int = 115200, 
                  yaw_id: int = 1, pitch_id: int = 2):
         """
         初始化PTZ控制器

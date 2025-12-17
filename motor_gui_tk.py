@@ -3,11 +3,12 @@
 Tkinter是Python内置GUI库，无需额外安装。
 
 运行:
-    python motor_gui_tk.py --port COM6
+    python motor_gui_tk.py --port COM9
 """
 from __future__ import annotations
 import sys
 import argparse
+import random
 import tkinter as tk
 from tkinter import ttk
 from typing import Optional
@@ -32,6 +33,10 @@ class MotorMonitorApp:
         # 温度缓存（保持最后一次数据）
         self.yaw_temperature = None
         self.pitch_temperature = None
+
+        # 随机角度控制
+        self.random_active = False
+        self.random_job = None
         
         self.root.title('云台电机监控')
         self.root.geometry('550x600')
@@ -74,6 +79,21 @@ class MotorMonitorApp:
         )
         self.status_label.pack(side=tk.LEFT, padx=5)
         
+        # 顶部右侧控制按钮
+        self.random_btn = tk.Button(
+            status_frame,
+            text='随机目标角度',
+            command=self.toggle_random_mode,
+            font=('Arial', 10, 'bold'),
+            bg='#3F51B5',
+            fg='white',
+            width=15,
+            height=1,
+            state=tk.DISABLED
+        )
+        # 先放置随机按钮，再放置打开串口按钮，保证相邻
+        self.random_btn.pack(side=tk.RIGHT, padx=5)
+
         # 右上角打开串口按钮
         self.open_port_btn = tk.Button(
             status_frame,
@@ -150,6 +170,8 @@ class MotorMonitorApp:
             state=tk.DISABLED
         )
         self.stop_btn.pack(side=tk.LEFT, padx=5)
+
+        # 随机按钮已移动到顶部状态栏
         
     def create_motor_display(self, parent: tk.Frame) -> dict:
         """创建电机数据显示组件"""
@@ -245,6 +267,7 @@ class MotorMonitorApp:
                     # 启用控制按钮
                     self.auto_read_btn.config(state=tk.NORMAL)
                     self.start_btn.config(state=tk.NORMAL)
+                    self.random_btn.config(state=tk.NORMAL)
                     
                     # 自动开始读取
                     self.start_monitoring()
@@ -259,6 +282,8 @@ class MotorMonitorApp:
         """关闭串口"""
         if self.monitoring:
             self.stop_monitoring()
+
+        self.stop_random_mode()
         
         if self.comm:
             self.comm.close()
@@ -273,6 +298,7 @@ class MotorMonitorApp:
         self.auto_read_btn.config(state=tk.DISABLED)
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
+        self.random_btn.config(state=tk.DISABLED)
     
     def start_monitoring(self):
         """开始监控"""
@@ -346,6 +372,50 @@ class MotorMonitorApp:
             self.start_monitoring()
             self.auto_read_btn.config(text='停止自动读取', bg='#FF5722')
     
+    def toggle_random_mode(self):
+        """启动或停止随机角度模式"""
+        if self.random_active:
+            self.stop_random_mode()
+        else:
+            self.start_random_mode()
+
+    def start_random_mode(self):
+        """开始随机生成角度"""
+        if not self.port_opened or not self.comm or not self.comm.available:
+            self.status_label.config(text=f'串口: {self.port} (随机角度需连接)')
+            return
+        self.random_active = True
+        self.random_btn.config(text='停止随机角度', bg='#D32F2F')
+        # 立即生成一次
+        self.generate_random_angles()
+
+    def stop_random_mode(self):
+        """停止随机生成角度"""
+        if self.random_job:
+            self.root.after_cancel(self.random_job)
+            self.random_job = None
+        if self.random_active:
+            self.random_active = False
+            self.random_btn.config(text='随机目标角度', bg='#3F51B5')
+
+    def generate_random_angles(self):
+        """生成随机角度并填入输入框"""
+        if not self.random_active:
+            return
+        if not self.comm or not self.comm.available:
+            self.stop_random_mode()
+            return
+
+        yaw_angle = random.randint(-85, 85)
+        pitch_angle = random.randint(-5, 50)
+
+        # 更新输入框（触发trace -> 发送命令）
+        self.yaw_target_var.set(str(yaw_angle))
+        self.pitch_target_var.set(str(pitch_angle))
+
+        # 15秒后继续
+        self.random_job = self.root.after(3000, self.generate_random_angles)
+
     def on_angle_changed(self, motor_id: int, var: tk.StringVar):
         """角度输入框变化回调"""
         # 取消之前的定时器
@@ -407,12 +477,14 @@ class MotorMonitorApp:
         """关闭窗口"""
         if self.port_opened:
             self.close_port()
+        else:
+            self.stop_random_mode()
         self.root.destroy()
 
 
 def main():
     parser = argparse.ArgumentParser(description='电机监控GUI (Tkinter)')
-    parser.add_argument('--port', default='COM6', help='串口号')
+    parser.add_argument('--port', default='COM9', help='串口号')
     parser.add_argument('--baud', type=int, default=115200, help='波特率')
     parser.add_argument('--autostart', action='store_true', help='启动后自动开始监控')
     args = parser.parse_args()
