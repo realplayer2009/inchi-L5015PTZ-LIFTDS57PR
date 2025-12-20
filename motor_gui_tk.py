@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional
 from rs485_comm import RS485Comm
+import time
 
 
 class MotorMonitorApp:
@@ -33,10 +34,17 @@ class MotorMonitorApp:
         # 温度缓存（保持最后一次数据）
         self.yaw_temperature = None
         self.pitch_temperature = None
+        self.yaw_temp_ts = 0.0
+        self.pitch_temp_ts = 0.0
 
         # 随机角度控制
         self.random_active = False
         self.random_job = None
+
+        # 命令发送队列，保证两个电机命令间隔100ms
+        self.command_queue = []
+        self.command_sending = False
+        self.send_interval_ms = 100
         
         self.root.title('云台电机监控')
         self.root.geometry('550x600')
@@ -225,13 +233,6 @@ class MotorMonitorApp:
         status_value = tk.Label(status_frame, text='未连接', font=('Arial', 9), fg='gray')
         status_value.pack(side=tk.LEFT)
         
-        # 控制状态
-        control_frame = tk.Frame(info_frame)
-        control_frame.pack(fill=tk.X, pady=2)
-        tk.Label(control_frame, text='控制状态:', font=('Arial', 9), width=12, anchor='w').pack(side=tk.LEFT)
-        control_status = tk.Label(control_frame, text='--', font=('Arial', 9), fg='gray')
-        control_status.pack(side=tk.LEFT)
-        
         # 电机温度
         temp_frame = tk.Frame(info_frame)
         temp_frame.pack(fill=tk.X, pady=2)
@@ -245,7 +246,7 @@ class MotorMonitorApp:
             'raw': raw_value,
             'status': status_value,
             'entry': angle_entry,
-            'control_status': control_status,
+            'control_status': None,
             'temperature': temp_value
         }
     
@@ -284,6 +285,10 @@ class MotorMonitorApp:
             self.stop_monitoring()
 
         self.stop_random_mode()
+
+        # 清理命令队列
+        self.command_queue.clear()
+        self.command_sending = False
         
         if self.comm:
             self.comm.close()
@@ -334,12 +339,13 @@ class MotorMonitorApp:
             self.yaw_widgets['raw'].config(text=f"{yaw_status['angle_raw']}")
             self.yaw_widgets['status'].config(text='正常', fg='green')
             # 更新温度（保持最后一次数据）
-            if 'temperature' in yaw_status:
+            if 'temperature' in yaw_status and yaw_status['temperature'] not in (None, 0):
                 self.yaw_temperature = yaw_status['temperature']
-            if self.yaw_temperature is not None:
-                self.yaw_widgets['temperature'].config(text=f"{self.yaw_temperature}℃", fg='blue')
+                self.yaw_temp_ts = time.time()
+            self._refresh_temperature_label(1)
         else:
             self.yaw_widgets['status'].config(text='读取失败', fg='red')
+            self._refresh_temperature_label(1, stale_only=True)
         
         # 读取 PITCH
         pitch_status = self.comm.read_status(2)
@@ -350,16 +356,38 @@ class MotorMonitorApp:
             self.pitch_widgets['raw'].config(text=f"{pitch_status['angle_raw']}")
             self.pitch_widgets['status'].config(text='正常', fg='green')
             # 更新温度（保持最后一次数据）
-            if 'temperature' in pitch_status:
+            if 'temperature' in pitch_status and pitch_status['temperature'] not in (None, 0):
                 self.pitch_temperature = pitch_status['temperature']
-            if self.pitch_temperature is not None:
-                self.pitch_widgets['temperature'].config(text=f"{self.pitch_temperature}℃", fg='blue')
+                self.pitch_temp_ts = time.time()
+            self._refresh_temperature_label(2)
         else:
             self.pitch_widgets['status'].config(text='读取失败', fg='red')
+            self._refresh_temperature_label(2, stale_only=True)
         
         # 500ms后再次更新
         if self.monitoring:
             self.root.after(500, self.update_data)
+
+    def _refresh_temperature_label(self, motor_id: int, stale_only: bool = False):
+        """根据缓存温度更新显示，避免闪回到占位符。stale_only只在已有缓存时刷新。"""
+        if motor_id == 1:
+            temp = self.yaw_temperature
+            ts = self.yaw_temp_ts
+            widget = self.yaw_widgets
+        else:
+            temp = self.pitch_temperature
+            ts = self.pitch_temp_ts
+            widget = self.pitch_widgets
+
+        if temp is None:
+            if not stale_only:
+                widget['temperature'].config(text='--', fg='gray')
+            return
+
+        # 如果温度数据超过5秒未更新，改成灰色但保留数值
+        age = time.time() - ts if ts else 0
+        fg = 'blue' if age < 5 else 'gray'
+        widget['temperature'].config(text=f"{temp}℃", fg=fg)
     
     def toggle_auto_read(self):
         """切换自动读取状态"""
@@ -407,13 +435,13 @@ class MotorMonitorApp:
             return
 
         yaw_angle = random.randint(-85, 85)
-        pitch_angle = random.randint(-5, 50)
+        pitch_angle = random.randint(-1, 30)    
 
         # 更新输入框（触发trace -> 发送命令）
         self.yaw_target_var.set(str(yaw_angle))
         self.pitch_target_var.set(str(pitch_angle))
 
-        # 15秒后继续
+       # 15秒后继续
         self.random_job = self.root.after(3000, self.generate_random_angles)
 
     def on_angle_changed(self, motor_id: int, var: tk.StringVar):
@@ -447,31 +475,60 @@ class MotorMonitorApp:
             target_angle = float(angle_str)
         except ValueError:
             widget = self.yaw_widgets if motor_id == 1 else self.pitch_widgets
-            widget['control_status'].config(text='输入格式错误', fg='red')
+            if widget['control_status']:
+                widget['control_status'].config(text='输入格式错误', fg='red')
             return
-        
-        # 发送0xA4命令
+
         widget = self.yaw_widgets if motor_id == 1 else self.pitch_widgets
-        widget['control_status'].config(text='发送中...', fg='orange')
-        
+        if widget['control_status']:
+            widget['control_status'].config(text='排队中...', fg='orange')
+        self.command_queue.append((motor_id, target_angle))
+
+        # 启动队列处理，保证命令间隔100ms
+        if not self.command_sending:
+            self.command_sending = True
+            self.root.after(0, self._process_command_queue)
+
+    def _process_command_queue(self):
+        """顺序发送命令，保证两个电机间隔100ms"""
+        if not self.command_queue or not self.comm or not self.comm.available:
+            self.command_sending = False
+            return
+
+        motor_id, target_angle = self.command_queue.pop(0)
+        widget = self.yaw_widgets if motor_id == 1 else self.pitch_widgets
+
+        if widget['control_status']:
+            widget['control_status'].config(text='发送中...', fg='orange')
+
         try:
             result = self.comm.set_target_angle(motor_id, target_angle, speed_rpm=100)
             if result and result['success']:
-                widget['control_status'].config(
-                    text=f'✓ 已设置 {target_angle:+.1f}°',
-                    fg='green'
-                )
-                # 更新温度显示（保持最后一次数据）
+                if widget['control_status']:
+                    widget['control_status'].config(
+                        text=f'✓ 已设置 {target_angle:+.1f}°',
+                        fg='green'
+                    )
                 if 'temperature' in result:
                     if motor_id == 1:
                         self.yaw_temperature = result['temperature']
+                        self.yaw_temp_ts = time.time()
                     else:
                         self.pitch_temperature = result['temperature']
-                    widget['temperature'].config(text=f"{result['temperature']}℃", fg='blue')
+                        self.pitch_temp_ts = time.time()
+                    self._refresh_temperature_label(motor_id)
             else:
-                widget['control_status'].config(text='设置失败', fg='red')
+                if widget['control_status']:
+                    widget['control_status'].config(text='设置失败', fg='red')
         except Exception as e:
-            widget['control_status'].config(text=f'错误: {str(e)}', fg='red')
+            if widget['control_status']:
+                widget['control_status'].config(text=f'错误: {str(e)}', fg='red')
+
+        # 间隔100ms再处理下一个
+        if self.command_queue:
+            self.root.after(self.send_interval_ms, self._process_command_queue)
+        else:
+            self.command_sending = False
     
     def on_close(self):
         """关闭窗口"""
