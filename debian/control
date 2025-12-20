@@ -1,0 +1,18 @@
+Package: inchiptz
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.6), python3-serial, python3-flask
+Maintainer: InchiPTZ Team <support@example.com>
+Description: PTZ Motor Control API Server
+ Flask API服务器，用于控制双轴云台伺服电机。
+ 通过HTTP API接口接收JSON格式的旋转/俯仰坐标设置，
+ 并返回2台电机的角度和温度数据。
+ .
+ 功能特性:
+  - Flask API服务器 (127.0.0.1:50278)
+  - 500ms轮询间隔读取电机状态
+  - 角度范围验证和异常处理
+  - 操作日志和错误日志分离记录
+  - systemd服务自动启动

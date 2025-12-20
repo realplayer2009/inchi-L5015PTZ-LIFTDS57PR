@@ -1,0 +1,29 @@
+#!/bin/bash
+# prerm script for inchiptz
+# 卸载前执行的脚本
+
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # 停止服务
+        if systemctl is-active --quiet inchiptz.service; then
+            systemctl stop inchiptz.service
+        fi
+        
+        # 禁用服务
+        if systemctl is-enabled --quiet inchiptz.service; then
+            systemctl disable inchiptz.service
+        fi
+        ;;
+    
+    failed-upgrade)
+        ;;
+    
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
