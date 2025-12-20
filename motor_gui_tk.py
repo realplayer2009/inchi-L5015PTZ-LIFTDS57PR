@@ -442,7 +442,7 @@ class MotorMonitorApp:
         self.pitch_target_var.set(str(pitch_angle))
 
        # 15秒后继续
-        self.random_job = self.root.after(3000, self.generate_random_angles)
+        self.random_job = self.root.after(10000, self.generate_random_angles)
 
     def on_angle_changed(self, motor_id: int, var: tk.StringVar):
         """角度输入框变化回调"""
