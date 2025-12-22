@@ -16,6 +16,7 @@ DATA_SIZE = 8
 # 命令码
 CMD_READ_ANGLE = 0x94
 CMD_READ_STATUS_A4 = 0xA4
+CMD_CLOSE = 0x80
 
 def modbus_crc(data: bytes) -> int:
     """Modbus CRC16 计算"""
@@ -268,6 +269,35 @@ class RS485Comm:
             'speed_rpm': speed_rpm,
             'angle_control': angle_control,
             'temperature': temperature,
+            'raw_hex': data.hex()
+        }
+
+    def close_motor(self, motor_id: int) -> Optional[Dict[str, Any]]:
+        """发送电机关闭指令 (命令0x80)
+        
+        参数:
+            motor_id: 电机ID
+            
+        命令数据格式 (8字节):
+          Byte0: 0x80 (命令码)
+          Byte1-7: 0x00 (保留)
+          
+        响应数据格式 (8字节):
+          Byte0: 0x80 (命令回显)
+          Byte1-7: 其他数据 (不解析温度)
+        
+        返回: 响应字典或None
+        """
+        # 发送关闭命令，payload 为空（全0）
+        data = self.transact(motor_id, CMD_CLOSE)
+        if data is None or len(data) != DATA_SIZE:
+            return None
+        
+        cmd_echo = data[0]
+        
+        return {
+            'cmd_echo': f'0x{cmd_echo:02X}',
+            'success': cmd_echo == CMD_CLOSE,
             'raw_hex': data.hex()
         }
 

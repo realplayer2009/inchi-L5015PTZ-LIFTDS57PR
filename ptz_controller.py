@@ -157,6 +157,21 @@ class PTZController:
         pitch_ok = self.set_pitch_angle(pitch_deg, speed_rpm)
         return yaw_ok and pitch_ok
     
+    def close_motors(self) -> bool:
+        """
+        发送关闭电机指令到YAW和PITCH电机
+        
+        Returns:
+            两个电机都成功关闭返回True
+        """
+        yaw_result = self._comm.close_motor(self.yaw_id)
+        pitch_result = self._comm.close_motor(self.pitch_id)
+        
+        yaw_ok = yaw_result and yaw_result.get('success', False)
+        pitch_ok = pitch_result and pitch_result.get('success', False)
+        
+        return yaw_ok and pitch_ok
+    
     def close(self):
         """关闭控制器，释放资源"""
         self.stop_monitoring()

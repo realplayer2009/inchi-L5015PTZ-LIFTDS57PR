@@ -178,8 +178,38 @@ class MotorMonitorApp:
             state=tk.DISABLED
         )
         self.stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 关闭按钮
+        self.shutdown_btn = tk.Button(
+            button_frame,
+            text='关闭电机',
+            command=self.send_shutdown_command,
+            font=('Arial', 11),
+            bg='#9E9E9E',
+            fg='white',
+            width=12,
+            height=2
+        )
+
+        # 退出按钮
+        self.exit_btn = tk.Button(
+            button_frame,
+            text='退出程序',
+            command=self.on_close,
+            font=('Arial', 11),
+            bg='#f44336',
+            fg='white',
+            width=12,
+            height=2
+        )
 
         # 随机按钮已移动到顶部状态栏
+        
+        # 关闭按钮移到这里，在停止监控旁边
+        self.shutdown_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 退出按钮
+        self.exit_btn.pack(side=tk.LEFT, padx=5)
         
     def create_motor_display(self, parent: tk.Frame) -> dict:
         """创建电机数据显示组件"""
@@ -530,8 +560,42 @@ class MotorMonitorApp:
         else:
             self.command_sending = False
     
+    def send_shutdown_command(self):
+        """发送0x80关闭电机指令到所有电机"""
+        if not self.comm or not self.comm.available:
+            self.status_label.config(text=f'串口: {self.port} (未连接，无法关闭电机)')
+            return
+        
+        # 向YAW电机发送关闭指令
+        yaw_result = self.comm.close_motor(1)
+        if yaw_result and yaw_result['success']:
+            self.yaw_widgets['status'].config(text='电机已关闭', fg='blue')
+        else:
+            self.yaw_widgets['status'].config(text='关闭失败', fg='red')
+        
+        # 向PITCH电机发送关闭指令
+        pitch_result = self.comm.close_motor(2)
+        if pitch_result and pitch_result['success']:
+            self.pitch_widgets['status'].config(text='电机已关闭', fg='blue')
+        else:
+            self.pitch_widgets['status'].config(text='关闭失败', fg='red')
+        
+        # 更新状态栏
+        if (yaw_result and yaw_result['success']) and (pitch_result and pitch_result['success']):
+            self.status_label.config(text=f'串口: {self.port} (所有电机已关闭)')
+        else:
+            self.status_label.config(text=f'串口: {self.port} (部分电机关闭失败)')
+    
     def on_close(self):
         """关闭窗口"""
+        # 如果串口已打开，先发送关闭电机指令
+        if self.port_opened and self.comm and self.comm.available:
+            try:
+                self.comm.close_motor(1)  # 关闭YAW电机
+                self.comm.close_motor(2)  # 关闭PITCH电机
+            except:
+                pass  # 忽略关闭指令的错误
+        
         if self.port_opened:
             self.close_port()
         else:
