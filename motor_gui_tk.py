@@ -81,7 +81,7 @@ class MotorMonitorApp:
         
         self.status_label = tk.Label(
             status_frame,
-            text=f'串口: {self.port} (未连接)',
+            text=f'连接: {self.port} (未连接)',
             font=('Arial', 10),
             bg='#f5f5f5'
         )
@@ -105,7 +105,7 @@ class MotorMonitorApp:
         # 右上角打开串口按钮
         self.open_port_btn = tk.Button(
             status_frame,
-            text='打开串口并读取',
+            text='打开连接并读取',
             command=self.open_port_and_read,
             font=('Arial', 10, 'bold'),
             bg='#4CAF50',
@@ -251,7 +251,7 @@ class MotorMonitorApp:
         }
     
     def open_port_and_read(self):
-        """打开串口并开始连续读取"""
+        """打开串口或TCP并开始连续读取"""
         if self.port_opened:
             # 已打开，则关闭
             self.close_port()
@@ -262,43 +262,36 @@ class MotorMonitorApp:
                 if self.comm.available:
                     self.port_opened = True
                     self.conn_indicator.config(fg='green')
-                    self.status_label.config(text=f'串口: {self.port} (已连接)')
-                    self.open_port_btn.config(text='关闭串口', bg='#f44336')
-                    
+                    self.status_label.config(text=f'连接: {self.port} (已连接)')
+                    self.open_port_btn.config(text='关闭连接', bg='#f44336')
                     # 启用控制按钮
                     self.auto_read_btn.config(state=tk.NORMAL)
                     self.start_btn.config(state=tk.NORMAL)
                     self.random_btn.config(state=tk.NORMAL)
-                    
                     # 自动开始读取
                     self.start_monitoring()
                 else:
                     self.conn_indicator.config(fg='red')
-                    self.status_label.config(text=f'串口: {self.port} (连接失败)')
+                    self.status_label.config(text=f'连接: {self.port} (连接失败)')
             except Exception as e:
                 self.conn_indicator.config(fg='red')
                 self.status_label.config(text=f'错误: {str(e)}')
     
     def close_port(self):
-        """关闭串口"""
+        """关闭串口或TCP"""
         if self.monitoring:
             self.stop_monitoring()
-
         self.stop_random_mode()
-
         # 清理命令队列
         self.command_queue.clear()
         self.command_sending = False
-        
         if self.comm:
             self.comm.close()
             self.comm = None
-        
         self.port_opened = False
         self.conn_indicator.config(fg='gray')
-        self.status_label.config(text=f'串口: {self.port} (未连接)')
-        self.open_port_btn.config(text='打开串口并读取', bg="#4CAF50")
-        
+        self.status_label.config(text=f'连接: {self.port} (未连接)')
+        self.open_port_btn.config(text='打开连接并读取', bg="#4CAF50")
         # 禁用控制按钮
         self.auto_read_btn.config(state=tk.DISABLED)
         self.start_btn.config(state=tk.DISABLED)
@@ -541,19 +534,19 @@ class MotorMonitorApp:
 
 def main():
     parser = argparse.ArgumentParser(description='电机监控GUI (Tkinter)')
-    parser.add_argument('--port', default='COM9', help='串口号')
-    parser.add_argument('--baud', type=int, default=115200, help='波特率')
+    parser.add_argument('--port', default='192.168.25.78:502', help='串口号或TCP地址:端口, 如192.168.25.78:502')
+    parser.add_argument('--baud', type=int, default=115200, help='波特率(串口模式下有效)')
     parser.add_argument('--autostart', action='store_true', help='启动后自动开始监控')
     args = parser.parse_args()
-    
+
     root = tk.Tk()
     app = MotorMonitorApp(root, port=args.port, baudrate=args.baud)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
-    
+
     # 自动启动监控
     if args.autostart:
         root.after(100, app.start_monitoring)
-    
+
     root.mainloop()
 
 

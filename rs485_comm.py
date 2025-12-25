@@ -6,6 +6,8 @@ import time
 import threading
 from typing import Optional, Dict, Any
 import serial  # type: ignore
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+import socket
 
 # 协议常量
 FRAME_HEADER = 0x3E
@@ -38,16 +40,32 @@ class RS485Comm:
         self._baudrate = baudrate
         self._timeout = timeout
         self._max_retries = max_retries
-        try:
-            self._ser = serial.Serial(
-                port=port,
-                baudrate=baudrate,
-                timeout=timeout
-            )
-            self._available = True
-        except Exception:
-            self._ser = None
-            self._available = False
+        self._tcp_mode = False
+        self._tcp_sock = None
+        # 支持TCP RTU: 传入格式 host:port 例如 192.168.25.78:502
+        if port and (":" in port):
+            host, port_str = port.split(":", 1)
+            try:
+                tcp_port = int(port_str)
+                self._tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._tcp_sock.settimeout(timeout)
+                self._tcp_sock.connect((host, tcp_port))
+                self._available = True
+                self._tcp_mode = True
+            except Exception:
+                self._tcp_sock = None
+                self._available = False
+        else:
+            try:
+                self._ser = serial.Serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout
+                )
+                self._available = True
+            except Exception:
+                self._ser = None
+                self._available = False
 
     @property
     def available(self) -> bool:
@@ -87,57 +105,67 @@ class RS485Comm:
         if timeout is None:
             timeout = self._timeout
         frame = self._build_frame(motor_id, cmd, payload)
-        
         for attempt in range(self._max_retries + 1):
             with self._lock:
                 if not self._available:
                     return None
                 try:
-                    self._ser.reset_input_buffer()
-                    self._ser.write(frame)
-                    self._ser.flush()
-                    
-                    # 等待完整响应帧
-                    t0 = time.time()
-                    buf = b''
-                    while time.time() - t0 < timeout:
-                        remaining = FRAME_SIZE - len(buf)
-                        if remaining > 0:
-                            chunk = self._ser.read(remaining)
-                            if chunk:
-                                buf += chunk
-                        if len(buf) >= FRAME_SIZE:
-                            break
-                        time.sleep(0.001)
-                    
-                    if len(buf) < FRAME_SIZE:
-                        if attempt == self._max_retries:
-                            return None
-                        time.sleep(0.01)
-                        continue
-                        
+                    if self._tcp_mode and self._tcp_sock:
+                        self._tcp_sock.sendall(frame)
+                        t0 = time.time()
+                        buf = b''
+                        while time.time() - t0 < timeout:
+                            remaining = FRAME_SIZE - len(buf)
+                            if remaining > 0:
+                                chunk = self._tcp_sock.recv(remaining)
+                                if chunk:
+                                    buf += chunk
+                            if len(buf) >= FRAME_SIZE:
+                                break
+                            time.sleep(0.001)
+                        if len(buf) < FRAME_SIZE:
+                            if attempt == self._max_retries:
+                                return None
+                            time.sleep(0.01)
+                            continue
+                    else:
+                        self._ser.reset_input_buffer()
+                        self._ser.write(frame)
+                        self._ser.flush()
+                        t0 = time.time()
+                        buf = b''
+                        while time.time() - t0 < timeout:
+                            remaining = FRAME_SIZE - len(buf)
+                            if remaining > 0:
+                                chunk = self._ser.read(remaining)
+                                if chunk:
+                                    buf += chunk
+                            if len(buf) >= FRAME_SIZE:
+                                break
+                            time.sleep(0.001)
+                        if len(buf) < FRAME_SIZE:
+                            if attempt == self._max_retries:
+                                return None
+                            time.sleep(0.01)
+                            continue
                 except Exception:
                     if attempt == self._max_retries:
                         return None
                     time.sleep(0.01)
                     continue
-            
             parsed = self._parse_frame(buf[:FRAME_SIZE])
             if parsed is None:
                 if attempt == self._max_retries:
                     return None
                 time.sleep(0.01)
                 continue
-            
             resp_id, data = parsed
             if resp_id != motor_id:
                 if attempt == self._max_retries:
                     return None
                 time.sleep(0.01)
                 continue
-            
             return data
-        
         return None
 
     def read_angle(self, motor_id: int) -> Optional[float]:
@@ -272,6 +300,12 @@ class RS485Comm:
         }
 
     def close(self):
-        """关闭串口"""
-        if self._ser:
+        """关闭串口或TCP连接"""
+        if self._tcp_mode and self._tcp_sock:
+            try:
+                self._tcp_sock.close()
+            except Exception:
+                pass
+            self._tcp_sock = None
+        elif hasattr(self, '_ser') and self._ser:
             self._ser.close()
