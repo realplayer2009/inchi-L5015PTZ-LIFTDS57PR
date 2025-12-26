@@ -210,6 +210,44 @@ def get_status():
         return jsonify({"success": False, "error": "服务器内部错误", "code": 500}), 500
 
 
+@app.route('/stop', methods=['POST'])
+def stop_motors():
+    """
+    停止所有电机运动
+    返回JSON: {"success": true} 或 {"success": false, "error": "错误信息", "code": 错误码}
+    """
+    global serial_error_flag
+    
+    try:
+        # 检查串口状态
+        if serial_error_flag:
+            error_msg = "串口通信失败，请检查设备连接"
+            logging.error(f"停止电机失败: {error_msg}")
+            return jsonify({"success": False, "error": error_msg, "code": 500}), 500
+        
+        # 停止电机
+        result = ptz_controller.stop_motors()
+        
+        if not result:
+            error_msg = "停止电机失败"
+            logging.error(f"停止电机失败: {error_msg}")
+            return jsonify({"success": False, "error": error_msg, "code": 500}), 500
+        
+        logging.info("电机已停止")
+        return jsonify({"success": True})
+    
+    except serial.SerialException as e:
+        serial_error_flag = True
+        error_msg = f"串口通信异常: {str(e)}"
+        logging.error(f"停止电机失败: {error_msg}")
+        return jsonify({"success": False, "error": "串口通信失败，请检查设备连接", "code": 500}), 500
+    
+    except Exception as e:
+        error_msg = f"未知错误: {str(e)}"
+        logging.error(f"停止电机失败: {error_msg}")
+        return jsonify({"success": False, "error": "服务器内部错误", "code": 500}), 500
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """
@@ -291,6 +329,7 @@ def main():
     logging.info(f"API端点:")
     logging.info(f"  POST /set_position - 设置PTZ位置 (JSON: {{\"yaw\": float, \"pitch\": float}})")
     logging.info(f"  GET  /get_status   - 获取PTZ状态 (返回角度和温度)")
+    logging.info(f"  POST /stop         - 停止所有电机运动")
     logging.info(f"  GET  /health       - 健康检查")
     logging.info(f"角度限制: YAW={YAW_MIN}°~{YAW_MAX}°, PITCH={PITCH_MIN}°~{PITCH_MAX}°")
     

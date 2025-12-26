@@ -157,6 +157,24 @@ class PTZController:
         pitch_ok = self.set_pitch_angle(pitch_deg, speed_rpm)
         return yaw_ok and pitch_ok
     
+    def stop_motors(self) -> bool:
+        """
+        停止所有电机运动（设置速度为0，保持当前位置）
+        
+        Returns:
+            成功返回True
+        """
+        yaw_angle = self.read_yaw_angle()
+        pitch_angle = self.read_pitch_angle()
+        
+        if yaw_angle is None or pitch_angle is None:
+            return False
+        
+        # 设置为当前位置，速度为0
+        yaw_ok = self.set_yaw_angle(yaw_angle, speed_rpm=0)
+        pitch_ok = self.set_pitch_angle(pitch_angle, speed_rpm=0)
+        return yaw_ok and pitch_ok
+    
     def close(self):
         """关闭控制器，释放资源"""
         self.stop_monitoring()
