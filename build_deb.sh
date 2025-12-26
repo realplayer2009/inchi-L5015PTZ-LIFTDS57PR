@@ -4,7 +4,7 @@
 set -e
 
 PACKAGE_NAME="inchiptz"
-VERSION="1.0.0"
+VERSION="1.0.1"
 ARCH="all"
 BUILD_DIR="build/${PACKAGE_NAME}_${VERSION}_${ARCH}"
 
