@@ -154,26 +154,29 @@ class PTZController:
             两个轴都成功返回True
         """
         yaw_ok = self.set_yaw_angle(yaw_deg, speed_rpm)
+        time.sleep(0.1)  # 两个电机指令间隔100ms
         pitch_ok = self.set_pitch_angle(pitch_deg, speed_rpm)
         return yaw_ok and pitch_ok
     
-    def stop_motors(self) -> bool:
+    def shutdown_motors(self) -> bool:
         """
-        停止所有电机运动（设置速度为0，保持当前位置）
+        关闭所有电机（使用0xCD广播指令，数据0x80）
         
         Returns:
             成功返回True
         """
-        yaw_angle = self.read_yaw_angle()
-        pitch_angle = self.read_pitch_angle()
+        # 发送0xCD广播关闭指令（一条指令同时控制所有电机）
+        return self._comm.broadcast_shutdown()
+    
+    def stop_motors(self) -> bool:
+        """
+        停止所有电机运动（使用0xCD广播指令，数据0x81）
         
-        if yaw_angle is None or pitch_angle is None:
-            return False
-        
-        # 设置为当前位置，速度为0
-        yaw_ok = self.set_yaw_angle(yaw_angle, speed_rpm=0)
-        pitch_ok = self.set_pitch_angle(pitch_angle, speed_rpm=0)
-        return yaw_ok and pitch_ok
+        Returns:
+            成功返回True
+        """
+        # 发送0xCD广播停止指令（一条指令同时控制所有电机）
+        return self._comm.broadcast_stop()
     
     def close(self):
         """关闭控制器，释放资源"""

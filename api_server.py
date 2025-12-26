@@ -210,10 +210,42 @@ def get_status():
         return jsonify({"success": False, "error": "服务器内部错误", "code": 500}), 500
 
 
+@app.route('/shutdown', methods=['POST'])
+def shutdown_motors():
+    """
+    关闭所有电机（发送0xCD广播指令，数据0x80）
+    返回JSON: {"success": true} 或 {"success": false, "error": "错误信息", "code": 错误码}
+    """
+    global serial_error_flag
+    
+    try:
+        # 检查串口状态
+        if serial_error_flag:
+            error_msg = "串口通信失败，请检查设备连接"
+            logging.error(f"关闭电机失败: {error_msg}")
+            return jsonify({"success": False, "error": error_msg, "code": 500}), 500
+        
+        # 关闭电机（0x80指令）
+        ptz_controller.shutdown_motors()
+        logging.info("电机已关闭（0xCD广播指令）")
+        return jsonify({"success": True})
+    
+    except serial.SerialException as e:
+        serial_error_flag = True
+        error_msg = f"串口通信异常: {str(e)}"
+        logging.error(f"关闭电机失败: {error_msg}")
+        return jsonify({"success": False, "error": "串口通信失败，请检查设备连接", "code": 500}), 500
+    
+    except Exception as e:
+        error_msg = f"未知错误: {str(e)}"
+        logging.error(f"关闭电机失败: {error_msg}")
+        return jsonify({"success": False, "error": "服务器内部错误", "code": 500}), 500
+
+
 @app.route('/stop', methods=['POST'])
 def stop_motors():
     """
-    停止所有电机运动
+    停止所有电机运动（发送0xCD广播指令，数据0x81）
     返回JSON: {"success": true} 或 {"success": false, "error": "错误信息", "code": 错误码}
     """
     global serial_error_flag
@@ -225,7 +257,7 @@ def stop_motors():
             logging.error(f"停止电机失败: {error_msg}")
             return jsonify({"success": False, "error": error_msg, "code": 500}), 500
         
-        # 停止电机
+        # 停止电机（0x81指令）
         result = ptz_controller.stop_motors()
         
         if not result:
@@ -233,7 +265,7 @@ def stop_motors():
             logging.error(f"停止电机失败: {error_msg}")
             return jsonify({"success": False, "error": error_msg, "code": 500}), 500
         
-        logging.info("电机已停止")
+        logging.info("电机已停止（0xCD广播指令）")
         return jsonify({"success": True})
     
     except serial.SerialException as e:
@@ -329,7 +361,8 @@ def main():
     logging.info(f"API端点:")
     logging.info(f"  POST /set_position - 设置PTZ位置 (JSON: {{\"yaw\": float, \"pitch\": float}})")
     logging.info(f"  GET  /get_status   - 获取PTZ状态 (返回角度和温度)")
-    logging.info(f"  POST /stop         - 停止所有电机运动")
+    logging.info(f"  POST /stop         - 停止所有电机运动 (0xCD广播指令)")
+    logging.info(f"  POST /shutdown     - 关闭所有电机 (0xCD广播指令)")
     logging.info(f"  GET  /health       - 健康检查")
     logging.info(f"角度限制: YAW={YAW_MIN}°~{YAW_MAX}°, PITCH={PITCH_MIN}°~{PITCH_MAX}°")
     
@@ -339,6 +372,13 @@ def main():
         logging.info("收到退出信号，正在关闭...")
     finally:
         if ptz_controller:
+            # 发送关闭电机指令
+            try:
+                ptz_controller.shutdown_motors()
+                logging.info("电机关闭指令已发送")
+            except:
+                logging.warning("发送电机关闭指令时出错")
+            
             ptz_controller.stop_monitoring()
             ptz_controller.close()
             logging.info("PTZ控制器已关闭")

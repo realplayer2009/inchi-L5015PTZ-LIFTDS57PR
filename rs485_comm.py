@@ -18,6 +18,9 @@ DATA_SIZE = 8
 # 命令码
 CMD_READ_ANGLE = 0x94
 CMD_READ_STATUS_A4 = 0xA4
+CMD_CLOSE = 0x80
+CMD_STOP = 0x81
+CMD_BROADCAST = 0xCD  # 广播地址，用于同时控制多个电机
 
 def modbus_crc(data: bytes) -> int:
     """Modbus CRC16 计算"""
@@ -298,6 +301,127 @@ class RS485Comm:
             'temperature': temperature,
             'raw_hex': data.hex()
         }
+
+    def close_motor(self, motor_id: int) -> Optional[Dict[str, Any]]:
+        """发送电机关闭指令 (命令0x80)
+        
+        参数:
+            motor_id: 电机ID
+            
+        命令数据格式 (8字节):
+          Byte0: 0x80 (命令码)
+          Byte1-7: 0x00 (保留)
+          
+        响应数据格式 (8字节):
+          Byte0: 0x80 (命令回显)
+          Byte1-7: 其他数据 (不解析温度)
+        
+        返回: 响应字典或None
+        """
+        # 发送关闭命令，payload 为空（全0）
+        data = self.transact(motor_id, CMD_CLOSE)
+        if data is None or len(data) != DATA_SIZE:
+            return None
+        
+        cmd_echo = data[0]
+        
+        return {
+            'cmd_echo': f'0x{cmd_echo:02X}',
+            'success': cmd_echo == CMD_CLOSE,
+            'raw_hex': data.hex()
+        }
+    
+    def stop_motor(self, motor_id: int) -> Optional[Dict[str, Any]]:
+        """发送电机停止指令 (命令0x81)
+        
+        参数:
+            motor_id: 电机ID
+            
+        命令数据格式 (8字节):
+          Byte0: 0x81 (命令码)
+          Byte1-7: 0x00 (保留)
+          
+        响应数据格式 (8字节):
+          Byte0: 0x81 (命令回显)
+          Byte1-7: 其他数据
+        
+        返回: 响应字典或None
+        """
+        # 发送停止命令，payload 为空（全0）
+        data = self.transact(motor_id, CMD_STOP)
+        if data is None or len(data) != DATA_SIZE:
+            return None
+        
+        cmd_echo = data[0]
+        
+        return {
+            'cmd_echo': f'0x{cmd_echo:02X}',
+            'success': cmd_echo == CMD_STOP,
+            'raw_hex': data.hex()
+        }
+    
+    def broadcast_shutdown(self) -> bool:
+        """广播关闭所有电机 (命令0xCD, 数据0x80)
+        
+        命令格式:
+          帧头: 0x3E
+          ID: 0xCD (广播地址)
+          数据长度: 0x08
+          数据区: 0x80 00 00 00 00 00 00 00 (8字节)
+          CRC: 2字节
+        
+        返回: 成功返回True，广播指令无响应
+        """
+        # 构建广播帧：0x3E 0xCD 0x08 0x80 00 00 00 00 00 00 00 + CRC
+        # motor_id=0xCD, cmd=0x80, payload为空（会自动填充7个0x00）
+        frame = self._build_frame(CMD_BROADCAST, CMD_CLOSE, b'')
+        
+        with self._lock:
+            if not self._available:
+                return False
+            try:
+                if self._tcp_mode and self._tcp_sock:
+                    self._tcp_sock.sendall(frame)
+                else:
+                    self._ser.write(frame)
+                    self._ser.flush()
+                # 广播指令无响应，稍等后返回
+                time.sleep(0.05)
+            except Exception as e:
+                # 忽略异常，认为已发出
+                pass
+            return True
+    
+    def broadcast_stop(self) -> bool:
+        """广播停止所有电机 (命令0xCD, 数据0x81)
+        
+        命令格式:
+          帧头: 0x3E
+          ID: 0xCD (广播地址)
+          数据长度: 0x08
+          数据区: 0x81 00 00 00 00 00 00 00 (8字节)
+          CRC: 2字节
+        
+        返回: 成功返回True，广播指令无响应
+        """
+        # 构建广播帧：0x3E 0xCD 0x08 0x81 00 00 00 00 00 00 00 + CRC
+        # motor_id=0xCD, cmd=0x81, payload为空（会自动填充7个0x00）
+        frame = self._build_frame(CMD_BROADCAST, CMD_STOP, b'')
+        
+        with self._lock:
+            if not self._available:
+                return False
+            try:
+                if self._tcp_mode and self._tcp_sock:
+                    self._tcp_sock.sendall(frame)
+                else:
+                    self._ser.write(frame)
+                    self._ser.flush()
+                # 广播指令无响应，稍等后返回
+                time.sleep(0.05)
+                return True
+            except Exception:
+                return False
 
     def close(self):
         """关闭串口或TCP连接"""
